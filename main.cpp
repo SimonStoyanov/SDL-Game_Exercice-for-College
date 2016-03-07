@@ -13,7 +13,6 @@
 // The library (.lib) and make sure all .dll
 // are in the executable's folder. Everything 
 // is in the folder file already.
-
 #include "SDL_mixer\include\SDL_mixer.h"
 #pragma comment( lib, "SDL_mixer/libx86/SDL2_mixer.lib" )
 
@@ -29,6 +28,8 @@
 #define NUM_SHOTS 32
 #define SHOT_SPEED 5
 #define MAX_KEYS 300
+
+#define MISSILE_SPEED 10
 
 enum KEY_STATE
 {
@@ -61,10 +62,16 @@ struct globals
 	KEY_STATE* keyboard;
 	// TODO 4:
 	// Add pointers to store music and the laser fx
-	Mix_Music* sound;
-	Mix_Music* fx;
-
+	Mix_Music *sound;
+	Mix_Chunk *fx;
 	int scroll;
+	//Improvements
+	SDL_Texture* missile;
+	projectile missiles[NUM_SHOTS];
+	bool fire_missile;
+	Mix_Chunk *missile_fx;
+
+	bool turbo;
 } g;
 
 // ----------------------------------------------------------------
@@ -87,22 +94,25 @@ void Start()
 	g.shot = SDL_CreateTextureFromSurface(g.renderer, IMG_Load("shot.png"));
 	SDL_QueryTexture(g.background, NULL, NULL, &g.background_width, NULL);
 
+	g.missile = SDL_CreateTextureFromSurface(g.renderer, IMG_Load("missile.png"));
+
 	// Create mixer --
 	// TODO 2:
 	// Initialize the audio library 
 	// Check https://www.libsdl.org/projects/SDL_mixer/docs/SDL_mixer.html#SEC7
 	int flags = MUS_WAV;
 	Mix_Init(flags);
-	Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 2, 4096);
+	Mix_OpenAudio(22050, MIX_DEFAULT_FORMAT, 2, 1024);
+
 
 	// TODO 5:
 	// Load music.ogg and play it. Store the pointer to it.
 	// Load the laser.wav file and store a pointer to it
 	g.sound = Mix_LoadMUS("music.ogg");
-	g.fx = Mix_LoadMUS("laser.wav");
-
+	g.fx = Mix_LoadWAV("laser.wav");
+	g.missile_fx = Mix_LoadWAV("missile.wav");
 	Mix_PlayMusic(g.sound, -1);
-	
+
 
 	// Init other vars --
 	g.scroll = 0;
@@ -120,14 +130,15 @@ void Finish()
 	// TODO 6:
 	// Stop and free the music and fx
 	Mix_FreeMusic(g.sound);
-	Mix_FreeMusic(g.fx);
+	Mix_FreeChunk(g.fx);
 	// TODO 3:
 	// Close the audio library
 	Mix_CloseAudio();
 	Mix_Quit();
-	
+
 	SDL_DestroyTexture(g.background);
 	SDL_DestroyTexture(g.ship);
+	SDL_DestroyTexture(g.missile);
 	IMG_Quit();
 	SDL_DestroyRenderer(g.renderer);
 	SDL_DestroyWindow(g.window);
@@ -158,6 +169,8 @@ bool CheckInput()
 	g.left = g.keyboard[SDL_SCANCODE_LEFT] == KEY_REPEAT;
 	g.right = g.keyboard[SDL_SCANCODE_RIGHT] == KEY_REPEAT;
 	g.fire = g.keyboard[SDL_SCANCODE_SPACE] == KEY_DOWN;
+	g.fire_missile = g.keyboard[SDL_SCANCODE_TAB] == KEY_DOWN;
+	g.turbo = g.keyboard[SDL_SCANCODE_LSHIFT] == KEY_REPEAT;
 
 	return true;
 }
@@ -171,9 +184,23 @@ void MoveStuff()
 	// hold true if the player is trying to move in that direction
 	// calc player's next position (stored in g.x and g.y)
 
+	if (g.up && g.ship_y >= 0){
+			g.ship_y -= 3;
+	}
+	if (g.down && g.ship_y <= SCREEN_HEIGHT - 82){
+		g.ship_y += 3;
+	}
+	if (g.left && g.ship_x >= 0){
+		g.ship_x -= 3;
+	}
+	if (g.right && g.ship_x <= SCREEN_WIDTH - 125){
+		g.ship_x += 3;
+	}
+
+
 	if(g.fire)
 	{
-		Mix_PlayMusic(g.fx, 1);
+		Mix_PlayChannel(-1, g.fx, 0);
 
 		g.fire = false;
 
@@ -186,6 +213,20 @@ void MoveStuff()
 		g.last_shot++;
 	}
 
+	if (g.fire_missile){
+		Mix_PlayChannel(-1, g.missile_fx, 0);
+
+		g.fire_missile = false;
+
+		if (g.last_shot == NUM_SHOTS)
+			g.last_shot = 0;
+
+		g.missiles[g.last_shot].alive = true;
+		g.missiles[g.last_shot].x = g.ship_x + 32;
+		g.missiles[g.last_shot].y = g.ship_y;
+		g.last_shot++;
+	}
+
 	for(int i = 0; i < NUM_SHOTS; ++i)
 	{
 		if(g.shots[i].alive)
@@ -194,6 +235,17 @@ void MoveStuff()
 				g.shots[i].x += SHOT_SPEED;
 			else
 				g.shots[i].alive = false;
+		}
+	}
+
+	for (int i = 0; i < NUM_SHOTS; ++i)
+	{
+		if (g.missiles[i].alive)
+		{
+			if (g.missiles[i].x < SCREEN_WIDTH)
+				g.missiles[i].x += SHOT_SPEED;
+			else
+				g.missiles[i].alive = false;
 		}
 	}
 }
@@ -211,14 +263,24 @@ void Draw()
 	// you should move target.x over time
 	// Remember that you have to draw the
 	// background twice to fake repetition
-
-	target.x = 0;
+	if (g.scroll < (g.background_width)*-1){
+		g.scroll = 0;
+	}
+	
+	target.x = g.scroll;
 	target.y = 0;
 	target.w = g.background_width;
 	target.h = SCREEN_HEIGHT;
 
+	if (g.turbo){
+		g.scroll -= 20;
+	}
+	else{
+		g.scroll -= 5;
+	}
 	SDL_RenderCopy(g.renderer, g.background, NULL, &target);
-
+	target.x = g.scroll + g.background_width;
+	SDL_RenderCopy(g.renderer, g.background, NULL, &target);
 
 	// Draw the ship --
 	target.x = g.ship_x;
@@ -241,6 +303,26 @@ void Draw()
 		}
 	}
 
+	//Draw Missile
+	target.w = 48;
+	target.h = 16;
+
+	for (int i = 0; i < NUM_SHOTS; ++i)
+	{
+		if (g.missiles[i].alive)
+		{
+			if (i % 2){
+				target.x = g.missiles[i].x;
+				target.y = g.missiles[i].y;
+				SDL_RenderCopy(g.renderer, g.missile, NULL, &target);
+			}
+			else{
+				target.x = g.missiles[i].x;
+				target.y = g.missiles[i].y + 42;
+				SDL_RenderCopy(g.renderer, g.missile, NULL, &target);
+			}
+		}
+	}
 	// Finally present framebuffer
 	SDL_RenderPresent(g.renderer);
 }
